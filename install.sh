@@ -9,9 +9,6 @@ NC='\033[0m'
 # Temporary file for servers configuration
 TEMP_SERVERS="/tmp/servers.json"
 
-# Error handling
-set -e
-
 # Function to add a server
 add_server() {
     echo -e "${BLUE}Adding new server configuration${NC}"
@@ -125,113 +122,109 @@ EOF
 install_requirements() {
     echo -e "${BLUE}Installing required packages...${NC}"
     
-    # Install system packages
     apt-get update
-    apt-get install -y python3 python3-pip python3-venv python3-full nginx certbot python3-certbot-nginx
+    apt-get install -y python3 python3-pip python3-venv python3-full nginx certbot
 
-    # Create and activate virtual environment
     mkdir -p /opt/subscription
     python3 -m venv /opt/subscription/venv
     
-    # Install Python packages in virtual environment
     /opt/subscription/venv/bin/pip install --no-cache-dir flask==3.0.0 requests==2.31.0 python-dateutil==2.8.2 gunicorn==21.2.0
 
     echo -e "${GREEN}Requirements installed successfully${NC}"
 }
 
-# Configure Nginx without SSL first
-# Configure Nginx
 # Configure Nginx
 configure_nginx() {
     echo -e "${BLUE}Configuring Nginx...${NC}"
     
-    # Stop nginx if it's running
     systemctl stop nginx
 
-    # Remove default config and any existing config
     rm -f /etc/nginx/sites-enabled/default
     rm -f /etc/nginx/sites-available/subscription
     rm -f /etc/nginx/sites-enabled/subscription
 
-    # Create basic HTTP config first
+    # Create nginx config without SSL
     cat > /etc/nginx/sites-available/subscription << EOF
 server {
     listen 80;
+    listen [::]:80;
     server_name $domain;
-    root /var/www/html;
-    
+
+    access_log /var/log/nginx/subscription-access.log;
+    error_log /var/log/nginx/subscription-error.log;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
     location / {
-        proxy_pass http://127.0.0.1:5000;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
+        return 301 https://\$host\$request_uri;
     }
 }
-EOF
-
-    # Enable the site
-    ln -sf /etc/nginx/sites-available/subscription /etc/nginx/sites-enabled/
-
-    # Test and start nginx with basic config
-    nginx -t && systemctl start nginx
-
-    # Wait a bit for nginx to start
-    sleep 5
-
-    echo -e "${BLUE}Setting up SSL certificate...${NC}"
-    
-    # Try to get SSL certificate
-    if certbot certonly --standalone -d "$domain" --non-interactive --agree-tos --email "admin@$domain"; then
-        # Create SSL configuration only after certificate is obtained
-        cat > /etc/nginx/sites-available/subscription << EOF
-server {
-    listen 80;
-    server_name $domain;
-    return 301 https://\$host\$request_uri;
-}
 
 server {
-    listen 443 ssl;
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name $domain;
+
+    access_log /var/log/nginx/subscription-access.log;
+    error_log /var/log/nginx/subscription-error.log;
+
+    root /var/www/html;
+    index index.html;
 
     ssl_certificate /etc/letsencrypt/live/$domain/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/$domain/privkey.pem;
+    ssl_trusted_certificate /etc/letsencrypt/live/$domain/chain.pem;
 
     ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
-    
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:50m;
+    ssl_session_tickets off;
+    ssl_stapling on;
+    ssl_stapling_verify on;
+    resolver 8.8.8.8 8.8.4.4 valid=300s;
+    resolver_timeout 5s;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options SAMEORIGIN;
+    add_header X-Content-Type-Options nosniff;
+    add_header X-XSS-Protection "1; mode=block";
+
     location / {
         proxy_pass http://127.0.0.1:5000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
         proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_buffering off;
+        proxy_redirect off;
+        proxy_connect_timeout 90;
+        proxy_send_timeout 90;
+        proxy_read_timeout 90;
     }
 }
 EOF
 
-        # Test and reload nginx with SSL config
-        nginx -t && systemctl restart nginx
-        echo -e "${GREEN}SSL configuration completed successfully${NC}"
-    else
-        echo -e "${RED}Failed to obtain SSL certificate. Continuing with HTTP only${NC}"
-    fi
+    ln -sf /etc/nginx/sites-available/subscription /etc/nginx/sites-enabled/
+
+    # Create webroot directory
+    mkdir -p /var/www/html
+    chown -R www-data:www-data /var/www/html
+
+    # Get SSL certificate
+    certbot certonly --webroot -w /var/www/html -d "$domain" --non-interactive --agree-tos --email "admin@$domain"
+
+    # Test and restart nginx
+    nginx -t && systemctl restart nginx
 
     echo -e "${GREEN}Nginx configured successfully${NC}"
-}
-# Configure SSL
-configure_ssl() {
-    echo -e "${BLUE}Configuring SSL...${NC}"
-    
-    # Wait for DNS propagation
-    echo "Waiting 30 seconds for DNS propagation..."
-    sleep 30
-    
-    # Get SSL certificate
-    certbot --nginx -d "$domain" --non-interactive --agree-tos --email admin@"$domain"
-    
-    echo -e "${GREEN}SSL configuration completed${NC}"
 }
 
 # Install systemd service
@@ -257,10 +250,8 @@ ExecStart=/opt/subscription/venv/bin/python /opt/subscription/src/app.py
 WantedBy=multi-user.target
 EOF
 
-    # Copy application files
     cp -r src/* /opt/subscription/
 
-    # Reload systemd and enable service
     systemctl daemon-reload
     systemctl enable subscription
     systemctl start subscription
@@ -295,9 +286,6 @@ install_requirements
 
 echo -e "${BLUE}Configuring Nginx...${NC}"
 configure_nginx
-
-echo -e "${BLUE}Configuring SSL...${NC}"
-configure_ssl
 
 echo -e "${BLUE}Installing service...${NC}"
 install_service
