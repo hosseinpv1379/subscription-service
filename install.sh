@@ -176,7 +176,7 @@ EOF
 
     # Test and start nginx
     nginx -t && systemctl start nginx
-
+    systemctl stop nginx
     echo -e "${BLUE}Installing certbot...${NC}"
     # Install certbot and its nginx plugin
     apt-get update
