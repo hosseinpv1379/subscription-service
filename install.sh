@@ -141,20 +141,24 @@ install_requirements() {
 
 # Configure Nginx without SSL first
 # Configure Nginx
+# Configure Nginx
 configure_nginx() {
     echo -e "${BLUE}Configuring Nginx...${NC}"
     
     # Stop nginx if it's running
     systemctl stop nginx
 
-    # Remove default config
+    # Remove default config and any existing config
     rm -f /etc/nginx/sites-enabled/default
+    rm -f /etc/nginx/sites-available/subscription
+    rm -f /etc/nginx/sites-enabled/subscription
 
-    # Create initial nginx config WITHOUT SSL
+    # Create basic HTTP config first
     cat > /etc/nginx/sites-available/subscription << EOF
 server {
     listen 80;
     server_name $domain;
+    root /var/www/html;
     
     location / {
         proxy_pass http://127.0.0.1:5000;
@@ -166,17 +170,20 @@ server {
 }
 EOF
 
-    # Enable site
+    # Enable the site
     ln -sf /etc/nginx/sites-available/subscription /etc/nginx/sites-enabled/
-    
-    # Test and start nginx with HTTP only
+
+    # Test and start nginx with basic config
     nginx -t && systemctl start nginx
 
-    echo -e "${BLUE}Obtaining SSL certificate...${NC}"
+    # Wait a bit for nginx to start
+    sleep 5
+
+    echo -e "${BLUE}Setting up SSL certificate...${NC}"
     
-    # Get SSL certificate
-    if certbot certonly --nginx -d "$domain" --non-interactive --agree-tos --email admin@"$domain"; then
-        # Now update nginx config WITH SSL
+    # Try to get SSL certificate
+    if certbot certonly --standalone -d "$domain" --non-interactive --agree-tos --email "admin@$domain"; then
+        # Create SSL configuration only after certificate is obtained
         cat > /etc/nginx/sites-available/subscription << EOF
 server {
     listen 80;
@@ -205,7 +212,7 @@ server {
 EOF
 
         # Test and reload nginx with SSL config
-        nginx -t && systemctl reload nginx
+        nginx -t && systemctl restart nginx
         echo -e "${GREEN}SSL configuration completed successfully${NC}"
     else
         echo -e "${RED}Failed to obtain SSL certificate. Continuing with HTTP only${NC}"
@@ -213,7 +220,6 @@ EOF
 
     echo -e "${GREEN}Nginx configured successfully${NC}"
 }
-
 # Configure SSL
 configure_ssl() {
     echo -e "${BLUE}Configuring SSL...${NC}"
