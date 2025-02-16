@@ -10,22 +10,19 @@
 
 ```bash
 # کلون کردن مخزن
-git clone https://github.com/hosseinpv1379/subscription-service.git
-cd subscription-service
+# کلون کردن مخزن
+cd /opt
+git clone https://github.com/hosseinpv1379/subscription-service.git subscription
+cd subscription
 
 # نصب پیش‌نیازها
 apt update
 apt install -y python3 python3-pip python3-venv nginx certbot jq
 
 # ساخت محیط مجازی پایتون
-mkdir -p /opt/subscription
-cd /opt/subscription
 python3 -m venv venv
 source venv/bin/activate
 pip install flask requests python-dateutil gunicorn
-
-# کپی فایل‌های برنامه
-cp -r ../subscription-service/src/* .
 ```
 
 ## پیکربندی Nginx و SSL
@@ -34,24 +31,6 @@ cp -r ../subscription-service/src/* .
 # حذف کانفیگ پیش‌فرض
 rm -f /etc/nginx/sites-enabled/default
 
-# ایجاد کانفیگ جدید - جایگزین your_domain.com با دامنه خود کنید
-cat > /etc/nginx/sites-available/subscription << 'EOF'
-server {
-    listen 80;
-    server_name your_domain.com;
-    
-    root /var/www/html;
-    
-    location / {
-        proxy_pass http://127.0.0.1:5000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
-EOF
-
-# فعال‌سازی کانفیگ
-ln -sf /etc/nginx/sites-available/subscription /etc/nginx/sites-enabled/
 
 # دریافت SSL - جایگزین your_domain.com با دامنه خود کنید
 certbot certonly --standalone -d your_domain.com --agree-tos --non-interactive --email admin@your_domain.com
