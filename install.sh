@@ -140,13 +140,17 @@ install_requirements() {
 }
 
 # Configure Nginx without SSL first
-configure_nginx_initial() {
-    echo -e "${BLUE}Configuring initial Nginx setup...${NC}"
+# Configure Nginx
+configure_nginx() {
+    echo -e "${BLUE}Configuring Nginx...${NC}"
     
+    # Stop nginx if it's running
+    systemctl stop nginx
+
     # Remove default config
     rm -f /etc/nginx/sites-enabled/default
 
-    # Create initial nginx config without SSL
+    # Create initial nginx config WITHOUT SSL
     cat > /etc/nginx/sites-available/subscription << EOF
 server {
     listen 80;
@@ -162,12 +166,52 @@ server {
 }
 EOF
 
+    # Enable site
     ln -sf /etc/nginx/sites-available/subscription /etc/nginx/sites-enabled/
     
-    # Test and restart nginx
-    nginx -t && systemctl restart nginx
+    # Test and start nginx with HTTP only
+    nginx -t && systemctl start nginx
+
+    echo -e "${BLUE}Obtaining SSL certificate...${NC}"
     
-    echo -e "${GREEN}Initial Nginx configuration completed${NC}"
+    # Get SSL certificate
+    if certbot certonly --nginx -d "$domain" --non-interactive --agree-tos --email admin@"$domain"; then
+        # Now update nginx config WITH SSL
+        cat > /etc/nginx/sites-available/subscription << EOF
+server {
+    listen 80;
+    server_name $domain;
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name $domain;
+
+    ssl_certificate /etc/letsencrypt/live/$domain/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$domain/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+
+        # Test and reload nginx with SSL config
+        nginx -t && systemctl reload nginx
+        echo -e "${GREEN}SSL configuration completed successfully${NC}"
+    else
+        echo -e "${RED}Failed to obtain SSL certificate. Continuing with HTTP only${NC}"
+    fi
+
+    echo -e "${GREEN}Nginx configured successfully${NC}"
 }
 
 # Configure SSL
@@ -244,7 +288,7 @@ echo -e "${BLUE}Installing requirements...${NC}"
 install_requirements
 
 echo -e "${BLUE}Configuring Nginx...${NC}"
-configure_nginx_initial
+configure_nginx
 
 echo -e "${BLUE}Configuring SSL...${NC}"
 configure_ssl
