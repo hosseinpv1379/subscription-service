@@ -1,0 +1,22 @@
+{
+    "subscription": {
+      "servers": [
+        {
+          "name": "Server 1",
+          "ip": "your_server_ip",
+          "port": 443,
+          "obfs": "salamander",
+          "obfs_password": "your_obfs_password"
+        }
+      ],
+      "subscription_names": {
+        "client1": "Provider 1",
+        "client2": "Provider 2"
+      },
+      "api": {
+        "base_url": "https://your-api-domain",
+        "endpoint": "/link"
+      },
+      "port": 5000
+    }
+  }

@@ -1,0 +1,22 @@
+[Unit]
+Description=Subscription Service
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=root
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=/opt/subscription
+ExecStart=/usr/bin/python3 /opt/subscription/src/app.py
+
+# Security measures
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+
+[Install]
+WantedBy=multi-user.target
