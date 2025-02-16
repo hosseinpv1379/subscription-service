@@ -133,31 +133,35 @@ install_requirements() {
     echo -e "${GREEN}Requirements installed successfully${NC}"
 }
 
-# Configure Nginx
+
 # Configure Nginx
 configure_nginx() {
     echo -e "${BLUE}Configuring Nginx...${NC}"
     
+    # Stop nginx if running
     systemctl stop nginx
 
+    # Remove any existing configs
     rm -f /etc/nginx/sites-enabled/default
     rm -f /etc/nginx/sites-available/subscription
     rm -f /etc/nginx/sites-enabled/subscription
 
-    # First create a basic HTTP configuration
+    # Create directory for SSL challenge
+    mkdir -p /var/www/html/.well-known/acme-challenge
+    chown -R www-data:www-data /var/www/html
+
+    # Create initial HTTP config
     cat > /etc/nginx/sites-available/subscription << EOF
 server {
     listen 80;
     listen [::]:80;
     server_name $domain;
 
-    access_log /var/log/nginx/subscription-access.log;
-    error_log /var/log/nginx/subscription-error.log;
-
     root /var/www/html;
-    
+
     location /.well-known/acme-challenge/ {
-        allow all;
+        alias /var/www/html/.well-known/acme-challenge/;
+        try_files \$uri =404;
     }
 
     location / {
@@ -169,17 +173,30 @@ server {
 EOF
 
     ln -sf /etc/nginx/sites-available/subscription /etc/nginx/sites-enabled/
-    mkdir -p /var/www/html
-    chown -R www-data:www-data /var/www/html
 
-    # Start nginx with HTTP configuration
+    # Test and start nginx
     nginx -t && systemctl start nginx
 
-    # Get SSL certificate
-    echo -e "${BLUE}Obtaining SSL certificate...${NC}"
-    certbot certonly --webroot -w /var/www/html -d "$domain" --non-interactive --agree-tos --email "admin@$domain"
+    echo -e "${BLUE}Installing certbot...${NC}"
+    # Install certbot and its nginx plugin
+    apt-get update
+    apt-get install -y certbot python3-certbot-nginx
 
-    # Now update nginx configuration with SSL
+    echo -e "${BLUE}Obtaining SSL certificate...${NC}"
+    # Stop nginx temporarily
+    systemctl stop nginx
+
+    # Get certificate with standalone mode
+    certbot certonly --standalone \
+        --preferred-challenges http \
+        --agree-tos \
+        --non-interactive \
+        --staple-ocsp \
+        --must-staple \
+        -d "$domain" \
+        --email "admin@$domain"
+
+    # If certificate was obtained successfully, configure SSL
     if [ -f "/etc/letsencrypt/live/$domain/fullchain.pem" ]; then
         cat > /etc/nginx/sites-available/subscription << EOF
 server {
@@ -194,16 +211,27 @@ server {
     listen [::]:443 ssl http2;
     server_name $domain;
 
-    access_log /var/log/nginx/subscription-access.log;
-    error_log /var/log/nginx/subscription-error.log;
-
     ssl_certificate /etc/letsencrypt/live/$domain/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/$domain/privkey.pem;
-    ssl_trusted_certificate /etc/letsencrypt/live/$domain/chain.pem;
 
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
     ssl_prefer_server_ciphers off;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:50m;
+    ssl_session_tickets off;
+
+    # OCSP stapling
+    ssl_stapling on;
+    ssl_stapling_verify on;
+    resolver 8.8.8.8 8.8.4.4 valid=300s;
+    resolver_timeout 5s;
+
+    # Security headers
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options SAMEORIGIN;
+    add_header X-Content-Type-Options nosniff;
+    add_header X-XSS-Protection "1; mode=block";
 
     location / {
         proxy_pass http://127.0.0.1:5000;
@@ -217,14 +245,29 @@ server {
     }
 }
 EOF
-        nginx -t && systemctl restart nginx
         echo -e "${GREEN}SSL configured successfully${NC}"
     else
-        echo -e "${RED}SSL certificate not obtained. Running with HTTP only${NC}"
+        echo -e "${RED}Failed to obtain SSL certificate. Check your domain and DNS settings${NC}"
+        # Revert to HTTP only config if SSL fails
+        cat > /etc/nginx/sites-available/subscription << EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $domain;
+
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+}
+EOF
     fi
 
-    echo -e "${GREEN}Nginx configured successfully${NC}"
+    # Final nginx restart
+    nginx -t && systemctl restart nginx
 }
+
 # Install systemd service
 install_service() {
     echo -e "${BLUE}Installing systemd service...${NC}"
