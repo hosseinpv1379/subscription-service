@@ -1,34 +1,40 @@
-# Multi-Protocol Subscription Service Setup Guide
+# راهنمای نصب و راه‌اندازی سرویس سابسکریپشن
 
-## Prerequisites
-- Ubuntu 20.04 or newer
-- Domain pointed to your server
-- Root access
+## پیش‌نیازها
+- سرور با سیستم‌عامل Ubuntu 20.04 یا بالاتر
+- دسترسی root
+- دامنه فعال متصل به IP سرور
+- پورت‌های 80 و 443 باز
 
-## Step-by-Step Installation
+## نصب از گیت‌هاب
 
-### 1. Initial Server Setup
 ```bash
+# کلون کردن مخزن
+git clone https://github.com/hosseinpv1379/subscription-service.git
+cd subscription-service
+
+# نصب پیش‌نیازها
 apt update
-apt upgrade -y
 apt install -y python3 python3-pip python3-venv nginx certbot jq
-```
 
-### 2. Create Project Directory and Setup Python Environment
-```bash
+# ساخت محیط مجازی پایتون
 mkdir -p /opt/subscription
 cd /opt/subscription
 python3 -m venv venv
 source venv/bin/activate
 pip install flask requests python-dateutil gunicorn
+
+# کپی فایل‌های برنامه
+cp -r ../subscription-service/src/* .
 ```
 
-### 3. Configure Nginx (Initial HTTP Setup)
+## پیکربندی Nginx و SSL
+
 ```bash
-# Remove default config
+# حذف کانفیگ پیش‌فرض
 rm -f /etc/nginx/sites-enabled/default
 
-# Create Nginx configuration
+# ایجاد کانفیگ جدید - جایگزین your_domain.com با دامنه خود کنید
 cat > /etc/nginx/sites-available/subscription << 'EOF'
 server {
     listen 80;
@@ -44,25 +50,13 @@ server {
 }
 EOF
 
-# Enable site
+# فعال‌سازی کانفیگ
 ln -sf /etc/nginx/sites-available/subscription /etc/nginx/sites-enabled/
-nginx -t && systemctl restart nginx
-```
 
-### 4. Get SSL Certificate
-```bash
-# Stop nginx temporarily
-systemctl stop nginx
-
-# Get certificate
+# دریافت SSL - جایگزین your_domain.com با دامنه خود کنید
 certbot certonly --standalone -d your_domain.com --agree-tos --non-interactive --email admin@your_domain.com
 
-# Start nginx
-systemctl start nginx
-```
-
-### 5. Configure Nginx with SSL
-```bash
+# آپدیت کانفیگ Nginx با SSL
 cat > /etc/nginx/sites-available/subscription << 'EOF'
 server {
     listen 80;
@@ -91,41 +85,14 @@ server {
 }
 EOF
 
+# راه‌اندازی مجدد Nginx
 nginx -t && systemctl restart nginx
 ```
 
-### 6. Create Configuration File
-```bash
-cat > /opt/subscription/config.json << EOF
-{
-  "subscription": {
-    "servers": [
-      {
-        "name": "Server 1",
-        "ip": "your_server_ip",
-        "port": 443,
-        "obfs": "salamander",
-        "obfs_password": "your_obfs_password"
-      }
-    ],
-    "subscription_names": {
-      "client1": "Provider 1"
-    },
-    "api": {
-      "base_url": "https://your-api-domain",
-      "endpoint": "/link"
-    },
-    "port": 5000
-  }
-}
-EOF
-```
+## راه‌اندازی سرویس
 
-### 7. Copy Application Files
-Copy your Python application files to `/opt/subscription/src/`
-
-### 8. Create Systemd Service
 ```bash
+# ایجاد فایل سرویس
 cat > /etc/systemd/system/subscription.service << EOF
 [Unit]
 Description=Subscription Service
@@ -143,93 +110,100 @@ Restart=always
 WantedBy=multi-user.target
 EOF
 
+# فعال‌سازی و شروع سرویس
 systemctl daemon-reload
 systemctl enable subscription
 systemctl start subscription
 ```
 
-## Service Management
+## نصب اسکریپت مدیریت
 
-### Check Service Status
+```bash
+# کپی اسکریپت مدیریت
+cp ../subscription-service/manage-subscription.sh /usr/local/bin/
+chmod +x /usr/local/bin/manage-subscription.sh
+```
+
+## استفاده از اسکریپت مدیریت
+
+برای مدیریت سرورها و پروایدرها، دستور زیر را اجرا کنید:
+```bash
+manage-subscription.sh
+```
+
+این اسکریپت امکانات زیر را دارد:
+1. اضافه کردن سرور جدید
+2. نمایش لیست سرورها
+3. حذف سرور
+4. اضافه کردن پروایدر جدید
+5. نمایش لیست پروایدرها
+6. حذف پروایدر
+
+## دستورات مفید
+
+بررسی وضعیت سرویس:
 ```bash
 systemctl status subscription
 ```
 
-### View Logs
+مشاهده لاگ‌ها:
 ```bash
 journalctl -u subscription -f
 ```
 
-### Restart Service
+راه‌اندازی مجدد سرویس:
 ```bash
 systemctl restart subscription
 ```
 
-## Troubleshooting
+## عیب‌یابی رایج
 
-### SSL Certificate Issues
+### مشکل SSL
 ```bash
-# Renew certificate manually
 certbot renew --force-renewal
 systemctl restart nginx
 ```
 
-### Nginx Configuration Test
+### مشکل دسترسی به پورت
 ```bash
-nginx -t
+lsof -i :80
+lsof -i :443
 ```
 
-### Check Ports
-```bash
-netstat -tulpn | grep -E ':80|:443'
-```
-
-### View Error Logs
+### مشکل فایل لاگ
 ```bash
 tail -f /var/log/nginx/error.log
-journalctl -u subscription -f
 ```
 
-## Adding New Servers
+## نکات امنیتی
 
-To add a new server, edit `/opt/subscription/config.json` and add server details to the `servers` array:
-```json
-{
-  "name": "New Server",
-  "ip": "new_server_ip",
-  "port": 443,
-  "obfs": "salamander",
-  "obfs_password": "new_password"
-}
-```
-
-After editing, restart the service:
-```bash
-systemctl restart subscription
-```
-
-## Security Recommendations
-
-1. Configure UFW:
+تنظیم فایروال:
 ```bash
 ufw allow 80/tcp
 ufw allow 443/tcp
 ufw enable
 ```
 
-2. Secure file permissions:
+محدود کردن دسترسی‌ها:
 ```bash
 chmod 600 /opt/subscription/config.json
 ```
 
-3. Regular updates:
+## بروزرسانی
+
+برای بروزرسانی سرویس:
 ```bash
-apt update && apt upgrade -y
+cd /opt/subscription
+git pull origin main
+systemctl restart subscription
 ```
 
-## Important Notes
-- Replace `your_domain.com` with your actual domain
-- Replace `your_server_ip` with your server's IP
-- Update API endpoints in config.json
-- Ensure your domain's DNS is properly configured
-- Make sure ports 80 and 443 are open in your firewall
+## لینک‌های مفید
+- [گیت‌هاب پروژه](https://github.com/hosseinpv1379/subscription-service)
+- [گزارش مشکلات](https://github.com/hosseinpv1379/subscription-service/issues)
+
+## نکات مهم
+- قبل از نصب، از اشاره دامنه به IP سرور مطمئن شوید
+- همه‌ی دستورات باید با دسترسی root اجرا شوند
+- بعد از هر تغییر در کانفیگ‌ها، سرویس‌ها را ری‌استارت کنید
+- از فایل‌های کانفیگ به صورت منظم بکاپ بگیرید
