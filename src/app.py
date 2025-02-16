@@ -11,7 +11,7 @@ app = Flask(__name__)
 
 def load_config() -> Dict:
    """Load configuration from JSON file"""
-   config_path = os.path.join(os.path.dirname(__file__), 'config.json')
+   config_path = 'D:\subscription-service\config.json'
    with open(config_path, 'r') as f:
        return json.load(f)
 
@@ -45,9 +45,9 @@ class ConfigGenerator:
            time_diff = self.calculate_time_difference(expire_time)
            name = f"{time_diff}"
            
-       name = name.replace("Used", 'Used ')\
-                  .replace("Total", 'Total ')\
-                  .replace("GB", "GB")
+       name = name.replace("Used", 'مصرف شده ')\
+                  .replace("Total", 'حجم کلی ')\
+                  .replace("GB", "گیگابایت")
        
        config['ps'] = name
        return config
@@ -95,22 +95,29 @@ class SubscriptionHandler:
            expire_time = None
 
        decoded_configs = base64.b64decode(response.text).decode('utf-8').split("\n")
+       print(decoded_configs)
        processed_configs = [
            f"vmess://{base64.b64encode(base64.b64decode(self.default_vmess)).decode()}\n"
        ]
        
        hysteria_token = None
        for config in decoded_configs:
-           if "vmess://" in config:
-               vmess_config = json.loads(base64.b64decode(config[8:]))
-               processed_config = self.generator.process_vmess_config(vmess_config, expire_time)
-               encoded_config = base64.b64encode(json.dumps(processed_config).encode()).decode()
-               processed_configs.append(f"vmess://{encoded_config}\n")
-           else:
-               subscribe_name = self.subscription_names.get(query, "Default")
-               processed_configs.append(f"{config} | {subscribe_name}\n")
-               if not hysteria_token and config:
-                   hysteria_token = config.split('@')[0].split('//')[1]
+            if "vmess://" in config:
+                try:
+                    # پردازش کانفیگ VMESS
+                    vmess_config = json.loads(base64.b64decode(config[8:]))
+                    processed_config = self.generator.process_vmess_config(vmess_config, expire_time)
+                    encoded_config = base64.b64encode(json.dumps(processed_config).encode()).decode()
+                    processed_configs.append(f"vmess://{encoded_config}\n")
+                except Exception as e:
+                    print(f"Error processing vmess config: {e}")
+            else:
+                # اگر کانفیگ VMESS نیست
+                subscribe_name = self.subscription_names.get(query, "Default")
+                processed_configs.append(f"{config} | {subscribe_name}\n")
+                if not hysteria_token and config:
+                    hysteria_token = config.split('@')[0].split('//')[1]
+
 
        if hysteria_token:
            processed_configs.extend(
@@ -159,4 +166,4 @@ def handle_subscription(token):
 
 if __name__ == "__main__":
    port = CONFIG['subscription'].get('port', 5000)
-   app.run(host='127.0.0.1', port=port)
+   app.run(host='127.0.0.1', port=port , debug=True)
