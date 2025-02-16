@@ -11,7 +11,7 @@ app = Flask(__name__)
 
 def load_config() -> Dict:
    """Load configuration from JSON file"""
-   config_path = 'D:\subscription-service\config.json'
+   config_path = '/opt/subscription/config.json'
    with open(config_path, 'r') as f:
        return json.load(f)
 
