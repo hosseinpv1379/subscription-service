@@ -134,6 +134,7 @@ install_requirements() {
 }
 
 # Configure Nginx
+# Configure Nginx
 configure_nginx() {
     echo -e "${BLUE}Configuring Nginx...${NC}"
     
@@ -143,7 +144,7 @@ configure_nginx() {
     rm -f /etc/nginx/sites-available/subscription
     rm -f /etc/nginx/sites-enabled/subscription
 
-    # Create nginx config without SSL
+    # First create a basic HTTP configuration
     cat > /etc/nginx/sites-available/subscription << EOF
 server {
     listen 80;
@@ -153,13 +154,39 @@ server {
     access_log /var/log/nginx/subscription-access.log;
     error_log /var/log/nginx/subscription-error.log;
 
+    root /var/www/html;
+    
     location /.well-known/acme-challenge/ {
-        root /var/www/html;
+        allow all;
     }
 
     location / {
-        return 301 https://\$host\$request_uri;
+        proxy_pass http://127.0.0.1:5000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
     }
+}
+EOF
+
+    ln -sf /etc/nginx/sites-available/subscription /etc/nginx/sites-enabled/
+    mkdir -p /var/www/html
+    chown -R www-data:www-data /var/www/html
+
+    # Start nginx with HTTP configuration
+    nginx -t && systemctl start nginx
+
+    # Get SSL certificate
+    echo -e "${BLUE}Obtaining SSL certificate...${NC}"
+    certbot certonly --webroot -w /var/www/html -d "$domain" --non-interactive --agree-tos --email "admin@$domain"
+
+    # Now update nginx configuration with SSL
+    if [ -f "/etc/letsencrypt/live/$domain/fullchain.pem" ]; then
+        cat > /etc/nginx/sites-available/subscription << EOF
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $domain;
+    return 301 https://\$host\$request_uri;
 }
 
 server {
@@ -170,28 +197,13 @@ server {
     access_log /var/log/nginx/subscription-access.log;
     error_log /var/log/nginx/subscription-error.log;
 
-    root /var/www/html;
-    index index.html;
-
     ssl_certificate /etc/letsencrypt/live/$domain/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/$domain/privkey.pem;
     ssl_trusted_certificate /etc/letsencrypt/live/$domain/chain.pem;
 
     ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
     ssl_prefer_server_ciphers off;
-    ssl_session_timeout 1d;
-    ssl_session_cache shared:SSL:50m;
-    ssl_session_tickets off;
-    ssl_stapling on;
-    ssl_stapling_verify on;
-    resolver 8.8.8.8 8.8.4.4 valid=300s;
-    resolver_timeout 5s;
-
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    add_header X-Frame-Options SAMEORIGIN;
-    add_header X-Content-Type-Options nosniff;
-    add_header X-XSS-Protection "1; mode=block";
 
     location / {
         proxy_pass http://127.0.0.1:5000;
@@ -199,34 +211,20 @@ server {
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host \$host;
-        proxy_cache_bypass \$http_upgrade;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_buffering off;
-        proxy_redirect off;
-        proxy_connect_timeout 90;
-        proxy_send_timeout 90;
-        proxy_read_timeout 90;
     }
 }
 EOF
-
-    ln -sf /etc/nginx/sites-available/subscription /etc/nginx/sites-enabled/
-
-    # Create webroot directory
-    mkdir -p /var/www/html
-    chown -R www-data:www-data /var/www/html
-
-    # Get SSL certificate
-    certbot certonly --webroot -w /var/www/html -d "$domain" --non-interactive --agree-tos --email "admin@$domain"
-
-    # Test and restart nginx
-    nginx -t && systemctl restart nginx
+        nginx -t && systemctl restart nginx
+        echo -e "${GREEN}SSL configured successfully${NC}"
+    else
+        echo -e "${RED}SSL certificate not obtained. Running with HTTP only${NC}"
+    fi
 
     echo -e "${GREEN}Nginx configured successfully${NC}"
 }
-
 # Install systemd service
 install_service() {
     echo -e "${BLUE}Installing systemd service...${NC}"
