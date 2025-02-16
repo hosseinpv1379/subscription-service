@@ -9,6 +9,9 @@ NC='\033[0m'
 # Temporary file for servers configuration
 TEMP_SERVERS="/tmp/servers.json"
 
+# Error handling
+set -e
+
 # Function to add a server
 add_server() {
     echo -e "${BLUE}Adding new server configuration${NC}"
@@ -19,12 +22,10 @@ add_server() {
     read -p "Enter obfuscation password (default: 2bxq67sohw9k1av83vk8f7h2it6v95b63xyitu2f0n50yxbq): " obfs_pass
     obfs_pass=${obfs_pass:-"2bxq67sohw9k1av83vk8f7h2it6v95b63xyitu2f0n50yxbq"}
 
-    # Add server to temporary file
     if [ ! -f "$TEMP_SERVERS" ]; then
         echo "[]" > "$TEMP_SERVERS"
     fi
 
-    # Add new server to JSON array
     tmp=$(mktemp)
     jq --arg name "$name" \
        --arg ip "$ip" \
@@ -99,10 +100,8 @@ configure_service() {
     
     read -p "Enter your domain: " domain
     
-    # Create directories
     mkdir -p /opt/subscription
     
-    # Create config.json using the servers from TEMP_SERVERS
     cat > /opt/subscription/config.json << EOF
 {
   "subscription": {
@@ -128,20 +127,21 @@ install_requirements() {
     
     # Install system packages
     apt-get update
-    apt-get install -y python3 python3-pip python3-venv nginx certbot python3-certbot-nginx
+    apt-get install -y python3 python3-pip python3-venv python3-full nginx certbot python3-certbot-nginx
 
     # Create and activate virtual environment
+    mkdir -p /opt/subscription
     python3 -m venv /opt/subscription/venv
     
     # Install Python packages in virtual environment
-    /opt/subscription/venv/bin/pip install flask requests python-dateutil gunicorn
+    /opt/subscription/venv/bin/pip install --no-cache-dir flask==3.0.0 requests==2.31.0 python-dateutil==2.8.2 gunicorn==21.2.0
 
     echo -e "${GREEN}Requirements installed successfully${NC}"
 }
 
-# Configure Nginx
-configure_nginx() {
-    echo -e "${BLUE}Configuring Nginx...${NC}"
+# Configure Nginx without SSL first
+configure_nginx_initial() {
+    echo -e "${BLUE}Configuring initial Nginx setup...${NC}"
     
     # Remove default config
     rm -f /etc/nginx/sites-enabled/default
@@ -162,25 +162,32 @@ server {
 }
 EOF
 
-    # Enable site
     ln -sf /etc/nginx/sites-available/subscription /etc/nginx/sites-enabled/
     
-    # Test nginx configuration
+    # Test and restart nginx
     nginx -t && systemctl restart nginx
+    
+    echo -e "${GREEN}Initial Nginx configuration completed${NC}"
+}
 
-    echo -e "${BLUE}Obtaining SSL certificate...${NC}"
+# Configure SSL
+configure_ssl() {
+    echo -e "${BLUE}Configuring SSL...${NC}"
+    
+    # Wait for DNS propagation
+    echo "Waiting 30 seconds for DNS propagation..."
+    sleep 30
     
     # Get SSL certificate
     certbot --nginx -d "$domain" --non-interactive --agree-tos --email admin@"$domain"
-
-    echo -e "${GREEN}Nginx configured successfully${NC}"
+    
+    echo -e "${GREEN}SSL configuration completed${NC}"
 }
 
 # Install systemd service
 install_service() {
     echo -e "${BLUE}Installing systemd service...${NC}"
     
-    # Create service file
     cat > /etc/systemd/system/subscription.service << EOF
 [Unit]
 Description=Subscription Service
@@ -226,13 +233,23 @@ if ! command -v jq &> /dev/null; then
     apt-get update && apt-get install -y jq
 fi
 
-# Configure servers first
+# Run installation steps
+echo -e "${BLUE}Starting server configuration...${NC}"
 configure_servers
 
-# Run installation steps
+echo -e "${BLUE}Creating service configuration...${NC}"
 configure_service
+
+echo -e "${BLUE}Installing requirements...${NC}"
 install_requirements
-configure_nginx
+
+echo -e "${BLUE}Configuring Nginx...${NC}"
+configure_nginx_initial
+
+echo -e "${BLUE}Configuring SSL...${NC}"
+configure_ssl
+
+echo -e "${BLUE}Installing service...${NC}"
 install_service
 
 # Cleanup
