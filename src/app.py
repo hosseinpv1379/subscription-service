@@ -33,7 +33,7 @@ class ConfigGenerator:
        for server in self.servers:
            config = (f"hysteria2://{token}@{server.ip}:{server.port}?"
                     f"fastopen=0&obfs={server.obfs}&"
-                    f"obfs-password={server.obfs_password}#{name} - {server.name}\n")
+                    f"obfs-password={server.obfs_password}#{server.name} - {name}\n")
            configs.append(config)
        return configs
 
